@@ -13,10 +13,14 @@ onmessage = async (event) => {
     }
 
     if (type === 'runInference' && session) {
-      const input = new onnx.Tensor(inputTensor, 'float32', [1, 3, 224, 224]); // Adjust shape as needed
+      // Adjust input shape based on your specific model's requirements
+      const input = new onnx.Tensor(inputTensor, 'float32', [1, 3, 224, 224]); // Modify shape accordingly
       const output = await session.run({ input });
-      const result = output.values().next().value.data[0]; // Adjust based on output shape
 
+      // Extracting the first output (customize based on model)
+      const result = output.values().next().value;
+
+      // Send result back to the main thread
       postMessage({ type: 'inferenceResult', result });
     }
   } catch (error) {

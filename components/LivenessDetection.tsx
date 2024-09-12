@@ -8,23 +8,6 @@ const LivenessDetection: React.FC = () => {
   const [modelLoaded, setModelLoaded] = useState<boolean>(false);
 
   useEffect(() => {
-    const worker = new Worker(new URL("../worker/worker-main.worker.js", import.meta.url), { type: 'module' });
-
-    worker.onmessage = (e) => {
-      if (e.data.type === "modelLoaded") {
-        setModelLoaded(true); // Update state when model is loaded
-        console.log("Model loaded successfully");
-      } else if (e.data.type === "inferenceResult") {
-        console.log("Inference result received:", e.data.result);
-        const livenessScore = e.data.result;
-        setResult(livenessScore > 0.5 ? "Live" : "Spoof");
-      } else if (e.data.type === 'error') {
-        console.error('Worker error:', e.data.message);
-      }
-    };
-
-    worker.postMessage({ type: "loadModel", modelPath: '/model.onnx' });
-
     const startVideo = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -39,16 +22,8 @@ const LivenessDetection: React.FC = () => {
     const captureFrame = () => {
       if (videoRef.current) {
         const canvas = document.createElement("canvas");
-        const videoWidth = videoRef.current.videoWidth;
-        const videoHeight = videoRef.current.videoHeight;
-
-        if (videoWidth === 0 || videoHeight === 0) {
-          console.warn('Video dimensions are zero.');
-          return null;
-        }
-
-        canvas.width = videoWidth;
-        canvas.height = videoHeight;
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
         const ctx = canvas.getContext("2d");
         if (ctx) {
           ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
@@ -59,34 +34,53 @@ const LivenessDetection: React.FC = () => {
     };
 
     const processFrame = (imageData: ImageData) => {
-      if (!modelLoaded) {
-        console.warn("Model not loaded yet.");
-        return;
-      }
-
-      const inputTensor = preprocessImageData(imageData);
-      console.log("Sending frame to worker for inference", inputTensor);
+      const inputTensor = new Float32Array(imageData.data);
       worker.postMessage({ type: "runInference", inputTensor });
     };
 
-    const intervalId = setInterval(() => {
-      const frame = captureFrame();
-      if (frame) {
-        processFrame(frame);
+    const worker = new Worker(new URL("../worker/worker-main.worker.js", import.meta.url));
+
+    worker.onmessage = (e) => {
+      if (e.data.type === "modelLoaded") {
+        setModelLoaded(true);
       }
-    }, 1000);
+      if (e.data.type === "inferenceResult") {
+        const livenessScore = e.data.result;
+        const result = livenessScore > 0.5 ? "Live" : "Spoof";
+        setResult(result);
+
+        if (result === "Spoof") {
+          stopVideo();
+        }
+      }
+      if (e.data.type === "error") {
+        console.error("Worker error:", e.data.message);
+      }
+    };
+
+    worker.postMessage({ type: "loadModel", modelPath: "/model.onnx" });
+
+    const intervalId = setInterval(() => {
+      if (modelLoaded) {
+        const frame = captureFrame();
+        if (frame) {
+          processFrame(frame);
+        }
+      }
+    }, 1000);  // Capture and process every 1 second
 
     startVideo();
 
-    return () => {
-      clearInterval(intervalId);
-      worker.terminate();
-    };
+    return () => clearInterval(intervalId);
   }, [modelLoaded]);
 
-  const preprocessImageData = (imageData: ImageData) => {
-    const inputArray = new Float32Array(imageData.data);
-    return inputArray;
+  const stopVideo = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      const tracks = stream.getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
   };
 
   return (
